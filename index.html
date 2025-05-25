@@ -1,72 +1,176 @@
-<!-- public/index.html -->
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Ultimate Tic Tac Toe</title>
-  <meta charset="UTF-8">
   <style>
-    body { font-family: sans-serif; text-align: center; }
-    #game { margin-top: 20px; }
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #f0f0f0;
+    }
+    .macro-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 600px;
+      height: 600px;
+      background-color: #000;
+      padding: 8px;
+    }
+    .micro-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      background-color: #000;
+    }
+    .cell {
+      background-color: white;
+      aspect-ratio: 1 / 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 2em;
+      font-family: sans-serif;
+      cursor: pointer;
+    }
+    .highlight {
+      background-color: #ddd;
+    }
+    .won-X {
+      background-color: rgba(255, 0, 0, 0.3);
+    }
+    .won-O {
+      background-color: rgba(0, 0, 255, 0.3);
+    }
+    .control-panel {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 10px;
+      font-family: sans-serif;
+    }
   </style>
 </head>
 <body>
-  <h1>Ultimate Tic Tac Toe</h1>
-  <button onclick="hostGame()">Host Online Game</button>
-  <input id="gameIdInput" placeholder="Enter Game ID">
-  <button onclick="joinGame()">Join Game</button>
-  <p id="status"></p>
-  <div id="game"></div>
+  <div class="control-panel">
+    <button onclick="hostGame('X')">Host as X</button>
+    <button onclick="hostGame('O')">Host as O</button><br><br>
+    <input id="gameIdInput" placeholder="Enter Game ID" />
+    <button onclick="joinGame()">Join</button>
+    <div id="gameIdDisplay"></div>
+  </div>
+  <div class="macro-board" id="macro"></div>
 
   <script>
-    let socket;
-    let playerNumber;
+    const serverUrl = "wss://your-railway-domain.up.railway.app"; // Replace this!
+    const socket = new WebSocket(serverUrl);
+    const macro = document.getElementById('macro');
+    const boards = [];
+    const boardWinners = Array(9).fill(null);
 
-    function connectSocket() {
-      const loc = window.location;
-      const protocol = loc.protocol === "https:" ? "wss" : "ws";
-      const socketURL = `${protocol}://${loc.host}`;
-      socket = new WebSocket(socketURL);
+    let currentPlayer = 'X';
+    let activeBoard = null;
+    let myMark = null;
+    let isMyTurn = false;
 
-      socket.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'hosted') {
-          document.getElementById('status').textContent = `Game ID: ${msg.gameId}`;
-        } else if (msg.type === 'start') {
-          playerNumber = msg.player;
-          document.getElementById('status').textContent = `Game started. You are Player ${playerNumber}`;
-        } else if (msg.type === 'move') {
-          // Handle received move
-          document.getElementById('game').textContent = `Opponent moved: ${msg.move}`;
-        } else if (msg.type === 'error') {
-          document.getElementById('status').textContent = msg.message;
+    function checkWinner(cells) {
+      const lines = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
+      ];
+      for (let [a,b,c] of lines) {
+        if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) {
+          return cells[a];
         }
-      };
-
-      socket.onopen = () => console.log('Connected');
-      socket.onclose = () => console.log('Disconnected');
+      }
+      return null;
     }
 
-    function hostGame() {
-      if (!socket || socket.readyState !== WebSocket.OPEN) connectSocket();
-      socket.addEventListener('open', () => {
-        socket.send(JSON.stringify({ type: 'host' }));
-      }, { once: true });
+    function updateHighlight() {
+      boards.forEach((board, i) => {
+        const canPlay = (activeBoard === null || activeBoard === i) && !boardWinners[i];
+        board.forEach(cell => cell.classList.toggle('highlight', canPlay && !cell.textContent));
+      });
+    }
+
+    function makeMove(boardIndex, cellIndex) {
+      if (!isMyTurn) return;
+      applyMove({ board: boardIndex, cell: cellIndex }, true);
+    }
+
+    function applyMove({ board, cell }, fromMe) {
+      const cellElem = boards[board][cell];
+      if (cellElem.textContent || (activeBoard !== null && activeBoard !== board) || boardWinners[board]) return;
+
+      cellElem.textContent = currentPlayer;
+      const values = boards[board].map(c => c.textContent);
+      const winner = checkWinner(values);
+      if (winner) {
+        boardWinners[board] = winner;
+        boards[board].forEach(c => c.classList.add('won-' + winner));
+      }
+
+      const macroWinner = checkWinner(boardWinners);
+      if (macroWinner) {
+        alert(macroWinner + ' wins the game!');
+        return;
+      }
+
+      activeBoard = boardWinners[cell] || boards[cell].every(c => c.textContent) ? null : cell;
+      currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+      isMyTurn = currentPlayer === myMark;
+      updateHighlight();
+
+      if (fromMe) {
+        socket.send(JSON.stringify({ type: 'move', move: { board, cell } }));
+      }
+    }
+
+    for (let i = 0; i < 9; i++) {
+      const microBoard = document.createElement('div');
+      microBoard.className = 'micro-board';
+      macro.appendChild(microBoard);
+
+      const boardCells = [];
+      for (let j = 0; j < 9; j++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.onclick = () => makeMove(i, j);
+        microBoard.appendChild(cell);
+        boardCells.push(cell);
+      }
+      boards.push(boardCells);
+    }
+
+    function hostGame(mark) {
+      socket.send(JSON.stringify({ type: 'host', mark }));
     }
 
     function joinGame() {
       const gameId = document.getElementById('gameIdInput').value.trim();
-      if (!gameId) return alert("Enter a Game ID");
-      if (!socket || socket.readyState !== WebSocket.OPEN) connectSocket();
-      socket.addEventListener('open', () => {
-        socket.send(JSON.stringify({ type: 'join', gameId }));
-      }, { once: true });
+      socket.send(JSON.stringify({ type: 'join', gameId }));
     }
 
-    function sendMove(moveData) {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'move', move: moveData }));
+    socket.onmessage = event => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'hosted') {
+        document.getElementById('gameIdDisplay').textContent = 'Game ID: ' + data.gameId;
+      } else if (data.type === 'start') {
+        myMark = data.mark;
+        isMyTurn = myMark === 'X';
+        updateHighlight();
+      } else if (data.type === 'move') {
+        applyMove(data.move, false);
+      } else if (data.type === 'end') {
+        alert('Opponent left the game.');
       }
-    }
+    };
   </script>
 </body>
 </html>
