@@ -51,8 +51,6 @@
     .won-O {
       background-color: rgba(0, 0, 255, 0.3);
     }
-
-    /* The box on the right to show Game ID */
     #gameIdBox {
       position: fixed;
       right: 10px;
@@ -80,9 +78,7 @@
     <div id="status"></div>
   </div>
 
-  <!-- Game ID display box on right -->
   <div id="gameIdBox"></div>
-
   <div class="macro-board" id="macro"></div>
 
   <script>
@@ -124,10 +120,10 @@
       });
     }
 
-    function makeMove(boardIndex, cellIndex) {
+    function makeMove(boardIndex, cellIndex, remote = false) {
       const cell = boards[boardIndex][cellIndex];
       if (cell.textContent || (activeBoard !== null && activeBoard !== boardIndex) || boardWinners[boardIndex]) return;
-      if (!localMode && currentPlayer !== window.mySymbol) return;
+      if (!localMode && currentPlayer !== window.mySymbol && !remote) return;
 
       cell.textContent = currentPlayer;
 
@@ -144,11 +140,13 @@
         return;
       }
 
-      activeBoard = boardWinners[cellIndex] || boards[cellIndex].every(c => c.textContent) ? null : cellIndex;
+      const nextBoardFilled = boards[cellIndex].every(c => c.textContent);
+      activeBoard = boardWinners[cellIndex] || nextBoardFilled ? null : cellIndex;
+
       currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
       updateHighlight();
 
-      if (!localMode) {
+      if (!localMode && !remote) {
         socket.send(JSON.stringify({ type: 'move', boardIndex, cellIndex }));
       }
     }
@@ -172,7 +170,10 @@
     updateHighlight();
 
     function resetGame() {
-      boards.forEach(board => board.forEach(cell => cell.textContent = ''));
+      boards.forEach(board => board.forEach(cell => {
+        cell.textContent = '';
+        cell.classList.remove('won-X', 'won-O', 'highlight');
+      }));
       boardWinners = Array(9).fill(null);
       activeBoard = null;
       currentPlayer = 'X';
@@ -183,7 +184,7 @@
       resetGame();
       localMode = true;
       statusDisplay.textContent = 'Local mode: Player X starts';
-      gameIdBox.textContent = '';  // Clear any ID displayed
+      gameIdBox.textContent = '';
     };
 
     hostBtn.onclick = () => {
@@ -193,7 +194,6 @@
       socket = new WebSocket('wss://uttt-production.up.railway.app');
 
       socket.onopen = () => {
-        console.log('Socket connected, sending host request');
         socket.send(JSON.stringify({ type: 'host', name }));
         window.mySymbol = 'X';
         currentPlayer = 'X';
@@ -203,7 +203,6 @@
 
       socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log('Message from server:', data);
 
         if (data.type === 'hosted') {
           gameId = data.gameId;
@@ -211,19 +210,20 @@
           gameIdBox.textContent = `Game ID: ${gameId}`;
         } else if (data.type === 'start') {
           statusDisplay.textContent = 'Game started!';
-          gameIdBox.textContent = ''; // Clear ID when game starts
+          gameIdBox.textContent = '';
         } else if (data.type === 'move') {
-          // When opponent moves, update board
           if (data.symbol !== window.mySymbol) {
             currentPlayer = data.symbol;
-            makeMove(data.boardIndex, data.cellIndex);
+            makeMove(data.boardIndex, data.cellIndex, true);
           }
+        } else if (data.type === 'error') {
+          alert('Error: ' + data.message);
         }
       };
 
       socket.onerror = (err) => {
         console.error('WebSocket error:', err);
-        statusDisplay.textContent = 'WebSocket error. See console.';
+        statusDisplay.textContent = 'WebSocket error.';
       };
 
       socket.onclose = () => {
@@ -240,7 +240,6 @@
       socket = new WebSocket('wss://uttt-production.up.railway.app');
 
       socket.onopen = () => {
-        console.log('Socket connected, sending join request');
         socket.send(JSON.stringify({ type: 'join', name, gameId: id }));
         window.mySymbol = 'O';
         currentPlayer = 'X';
@@ -250,7 +249,6 @@
 
       socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log('Message from server:', data);
 
         if (data.type === 'start') {
           statusDisplay.textContent = 'Game started!';
@@ -258,7 +256,7 @@
         } else if (data.type === 'move') {
           if (data.symbol !== window.mySymbol) {
             currentPlayer = data.symbol;
-            makeMove(data.boardIndex, data.cellIndex);
+            makeMove(data.boardIndex, data.cellIndex, true);
           }
         } else if (data.type === 'error') {
           alert('Error: ' + data.message);
@@ -268,7 +266,7 @@
 
       socket.onerror = (err) => {
         console.error('WebSocket error:', err);
-        statusDisplay.textContent = 'WebSocket error. See console.';
+        statusDisplay.textContent = 'WebSocket error.';
       };
 
       socket.onclose = () => {
