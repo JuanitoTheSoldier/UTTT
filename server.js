@@ -1,56 +1,45 @@
-// server.js
-const express = require('express');
-const http = require('http');
 const WebSocket = require('ws');
-const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const PORT = process.env.PORT || 8080;
+const wss = new WebSocket.Server({ port: PORT });
 
-const games = new Map(); // gameId -> [player1, player2]
+const games = new Map();
 
-wss.on('connection', (ws) => {
-  let currentGameId = null;
-
-  ws.on('message', (message) => {
-    let data;
-    try {
-      data = JSON.parse(message);
-    } catch (e) {
-      console.error('Invalid JSON:', message);
-      return;
-    }
+wss.on('connection', ws => {
+  ws.on('message', msg => {
+    const data = JSON.parse(msg);
 
     if (data.type === 'host') {
-      const gameId = Math.random().toString(36).substring(2, 8);
-      games.set(gameId, [ws]);
-      currentGameId = gameId;
+      const gameId = uuidv4().slice(0, 6);
+      ws.mark = data.mark;
+      games.set(gameId, { players: [ws], marks: [data.mark] });
       ws.send(JSON.stringify({ type: 'hosted', gameId }));
-      console.log(`Game hosted: ${gameId}`);
     }
 
     else if (data.type === 'join') {
       const game = games.get(data.gameId);
-      if (game && game.length === 1) {
-        game.push(ws);
-        currentGameId = data.gameId;
-
-        // Inform both players the game has started
-        game[0].send(JSON.stringify({ type: 'start', player: 1 }));
-        game[1].send(JSON.stringify({ type: 'start', player: 2 }));
-        console.log(`Player joined game ${data.gameId}`);
-      } else {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid or full game ID' }));
+      if (!game || game.players.length >= 2) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid or full game ID.' }));
+        return;
       }
+
+      const otherMark = game.marks[0] === 'X' ? 'O' : 'X';
+      ws.mark = otherMark;
+      game.players.push(ws);
+      game.marks.push(otherMark);
+
+      game.players.forEach((p, i) => 
+        p.send(JSON.stringify({ type: 'start', mark: game.marks[i] }))
+      );
     }
 
     else if (data.type === 'move') {
-      const game = games.get(currentGameId);
+      const game = [...games.values()].find(g => g.players.includes(ws));
       if (game) {
-        game.forEach(player => {
-          if (player !== ws && player.readyState === WebSocket.OPEN) {
-            player.send(JSON.stringify({ type: 'move', move: data.move }));
+        game.players.forEach(p => {
+          if (p !== ws) {
+            p.send(JSON.stringify({ type: 'move', move: data.move }));
           }
         });
       }
@@ -58,24 +47,13 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (currentGameId && games.has(currentGameId)) {
-      const game = games.get(currentGameId);
-      games.delete(currentGameId);
-      game.forEach(player => {
-        if (player !== ws && player.readyState === WebSocket.OPEN) {
-          player.send(JSON.stringify({ type: 'error', message: 'Opponent disconnected' }));
-        }
-      });
-      console.log(`Game ${currentGameId} ended due to disconnect`);
+    for (const [id, game] of games.entries()) {
+      if (game.players.includes(ws)) {
+        game.players.forEach(p => {
+          if (p !== ws) p.send(JSON.stringify({ type: 'end', reason: 'opponent left' }));
+        });
+        games.delete(id);
+      }
     }
   });
-});
-
-// Serve static files (frontend)
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Railway will assign a dynamic port
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
