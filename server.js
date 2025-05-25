@@ -1,9 +1,9 @@
 const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 3000 });
+const wss = new WebSocket.Server({ port: 8080 });
 
-let games = {}; // gameId -> { host: ws, guest: ws }
+const games = new Map(); // gameId -> { players: [ws, ws], ... }
 
-function generateGameId() {
+function makeGameId() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
@@ -13,64 +13,85 @@ wss.on('connection', (ws) => {
     try {
       data = JSON.parse(message);
     } catch {
+      ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
       return;
     }
 
-    if (data.type === 'host') {
-      const gameId = generateGameId();
-      games[gameId] = { host: ws, guest: null };
+    const { type } = data;
+
+    if (type === 'host') {
+      const gameId = makeGameId();
       ws.gameId = gameId;
-      ws.isHost = true;
+      ws.symbol = 'X';
 
-      // Send back the hosted event with the game ID
+      games.set(gameId, { players: [ws] });
+
       ws.send(JSON.stringify({ type: 'hosted', gameId }));
-      console.log(`Game hosted with ID: ${gameId}`);
 
-    } else if (data.type === 'join') {
-      const game = games[data.gameId];
-      if (game && !game.guest) {
-        game.guest = ws;
-        ws.gameId = data.gameId;
-        ws.isHost = false;
+      console.log(`Game hosted with ID ${gameId}`);
 
-        // Notify both players the game is starting
-        game.host.send(JSON.stringify({ type: 'start' }));
-        game.guest.send(JSON.stringify({ type: 'start' }));
+    } else if (type === 'join') {
+      const { gameId } = data;
+      const game = games.get(gameId);
 
-        console.log(`Player joined game: ${data.gameId}`);
-
-      } else {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid game ID or game full' }));
+      if (!game) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Game not found' }));
+        return;
       }
 
-    } else if (data.type === 'move') {
-      // Broadcast move to the other player
-      const game = games[ws.gameId];
+      if (game.players.length >= 2) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Game full' }));
+        return;
+      }
+
+      ws.gameId = gameId;
+      ws.symbol = 'O';
+
+      game.players.push(ws);
+
+      // Notify both players game is starting
+      game.players.forEach((player) => {
+        if (player.readyState === WebSocket.OPEN) {
+          player.send(JSON.stringify({ type: 'start' }));
+        }
+      });
+
+      console.log(`Player joined game ${gameId}`);
+
+    } else if (type === 'move') {
+      const { boardIndex, cellIndex } = data;
+      const gameId = ws.gameId;
+      const game = games.get(gameId);
+
       if (!game) return;
 
-      const other = ws.isHost ? game.guest : game.host;
-      if (other && other.readyState === WebSocket.OPEN) {
-        other.send(JSON.stringify({
-          type: 'move',
-          boardIndex: data.boardIndex,
-          cellIndex: data.cellIndex,
-          symbol: ws.isHost ? 'X' : 'O'
-        }));
-      }
+      const symbol = ws.symbol;
+      // Broadcast move to both players
+      game.players.forEach((player) => {
+        if (player.readyState === WebSocket.OPEN) {
+          player.send(JSON.stringify({
+            type: 'move',
+            boardIndex,
+            cellIndex,
+            symbol
+          }));
+        }
+      });
     }
   });
 
   ws.on('close', () => {
+    // Clean up game if player disconnects
     if (!ws.gameId) return;
-    const game = games[ws.gameId];
+    const game = games.get(ws.gameId);
     if (!game) return;
 
-    // Close both sockets and delete the game on disconnect
-    if (game.host && game.host !== ws) game.host.close();
-    if (game.guest && game.guest !== ws) game.guest.close();
-    delete games[ws.gameId];
-    console.log(`Game ${ws.gameId} closed`);
+    game.players = game.players.filter(p => p !== ws);
+    if (game.players.length === 0) {
+      games.delete(ws.gameId);
+      console.log(`Game ${ws.gameId} deleted due to no players.`);
+    }
   });
 });
 
-console.log('WebSocket server started on ws://localhost:3000');
+console.log('WebSocket server running on ws://localhost:8080');
