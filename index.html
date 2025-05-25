@@ -160,8 +160,9 @@
     socket.onmessage = event => {
       const data = JSON.parse(event.data);
       if (data.type === 'hosted') {
-        document.getElementById('gameIdDisplay').textContent = 'Game ID: ' + data.gameId;
-      } else if (data.type === 'start') {
+  const display = document.getElementById('gameIdDisplay');
+  display.innerHTML = `<strong>Game ID:</strong> <code>${data.gameId}</code><br>Share this ID with your friend to join.`;
+} else if (data.type === 'start') {
         myMark = data.mark;
         isMyTurn = myMark === 'X';
         updateHighlight();
