@@ -190,7 +190,7 @@
       const name = usernameInput.value.trim();
       if (!name) return alert('Enter a username');
 
-      socket = new WebSocket('ws://localhost:3000');
+      socket = new WebSocket('wss://uttt-production.up.railway.app');
 
       socket.onopen = () => {
         console.log('Socket connected, sending host request');
