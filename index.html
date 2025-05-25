@@ -1,309 +1,72 @@
+<!-- public/index.html -->
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Ultimate Tic Tac Toe</title>
-<style>
-  body {
-    font-family: sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background-color: #f0f0f0;
-    height: 100vh;
-    margin: 0;
-  }
-  .menu {
-    margin-top: 20px;
-  }
-  .macro-board {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    width: 600px;
-    height: 600px;
-    background-color: #000;
-    padding: 8px;
-    margin-top: 20px;
-  }
-  .micro-board {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2px;
-    background-color: #000;
-  }
-  .cell {
-    background-color: white;
-    aspect-ratio: 1 / 1;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-size: 2em;
-    cursor: pointer;
-    user-select: none;
-  }
-  .highlight {
-    background-color: #ddd;
-  }
-  .won-X {
-    background-color: rgba(255, 0, 0, 0.3);
-  }
-  .won-O {
-    background-color: rgba(0, 0, 255, 0.3);
-  }
-  #gameIdBox {
-    position: fixed;
-    right: 10px;
-    top: 10px;
-    background: #eee;
-    padding: 10px;
-    border: 1px solid #ccc;
-    font-weight: bold;
-    min-width: 160px;
-    text-align: center;
-    font-family: monospace;
-    user-select: all;
-    white-space: nowrap;
-    z-index: 1000;
-  }
-</style>
+  <title>Ultimate Tic Tac Toe</title>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: sans-serif; text-align: center; }
+    #game { margin-top: 20px; }
+  </style>
 </head>
 <body>
-  <div class="menu">
-    <input type="text" id="username" placeholder="Enter username" />
-    <button id="localBtn">Play Locally</button>
-    <button id="hostBtn">Host Online Game</button>
-    <input type="text" id="joinGameId" placeholder="Game ID to join" />
-    <button id="joinBtn">Join Online Game</button>
-    <div id="status"></div>
-  </div>
-
-  <div id="gameIdBox"></div>
-
-  <div class="macro-board" id="macro"></div>
+  <h1>Ultimate Tic Tac Toe</h1>
+  <button onclick="hostGame()">Host Online Game</button>
+  <input id="gameIdInput" placeholder="Enter Game ID">
+  <button onclick="joinGame()">Join Game</button>
+  <p id="status"></p>
+  <div id="game"></div>
 
   <script>
-    const macro = document.getElementById('macro');
-    const statusDisplay = document.getElementById('status');
-    const usernameInput = document.getElementById('username');
-    const joinGameIdInput = document.getElementById('joinGameId');
-    const localBtn = document.getElementById('localBtn');
-    const hostBtn = document.getElementById('hostBtn');
-    const joinBtn = document.getElementById('joinBtn');
-    const gameIdBox = document.getElementById('gameIdBox');
-
-    let boards = [];
-    let boardWinners = Array(9).fill(null);
-    let currentPlayer = 'X';
-    let activeBoard = null;
-    let localMode = false;
     let socket;
-    let gameId;
-    let mySymbol;
+    let playerNumber;
 
-    function checkWinner(cells) {
-      const lines = [
-        [0,1,2],[3,4,5],[6,7,8],
-        [0,3,6],[1,4,7],[2,5,8],
-        [0,4,8],[2,4,6]
-      ];
-      for (let [a,b,c] of lines) {
-        if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) {
-          return cells[a];
+    function connectSocket() {
+      const loc = window.location;
+      const protocol = loc.protocol === "https:" ? "wss" : "ws";
+      const socketURL = `${protocol}://${loc.host}`;
+      socket = new WebSocket(socketURL);
+
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'hosted') {
+          document.getElementById('status').textContent = `Game ID: ${msg.gameId}`;
+        } else if (msg.type === 'start') {
+          playerNumber = msg.player;
+          document.getElementById('status').textContent = `Game started. You are Player ${playerNumber}`;
+        } else if (msg.type === 'move') {
+          // Handle received move
+          document.getElementById('game').textContent = `Opponent moved: ${msg.move}`;
+        } else if (msg.type === 'error') {
+          document.getElementById('status').textContent = msg.message;
         }
-      }
-      return null;
+      };
+
+      socket.onopen = () => console.log('Connected');
+      socket.onclose = () => console.log('Disconnected');
     }
 
-    function updateHighlight() {
-      boards.forEach((board, i) => {
-        const canPlay = (activeBoard === null || activeBoard === i) && !boardWinners[i] && currentPlayer === mySymbol;
-        board.forEach(cell => cell.classList.toggle('highlight', canPlay && !cell.textContent));
-      });
-    }
-
-    function makeMove(boardIndex, cellIndex, remote = false) {
-      const cell = boards[boardIndex][cellIndex];
-
-      if (!remote && (
-        cell.textContent || 
-        (activeBoard !== null && activeBoard !== boardIndex) || 
-        boardWinners[boardIndex] || 
-        (!localMode && currentPlayer !== mySymbol)
-      )) return;
-
-      cell.textContent = currentPlayer;
-
-      const values = boards[boardIndex].map(c => c.textContent);
-      const winner = checkWinner(values);
-      if (winner) {
-        boardWinners[boardIndex] = winner;
-        boards[boardIndex].forEach(c => c.classList.add('won-' + winner));
-      }
-
-      const macroWinner = checkWinner(boardWinners);
-      if (macroWinner) {
-        alert(`${macroWinner} wins the game!`);
-        resetGame();
-        return;
-      }
-
-      const nextBoardFilled = boards[cellIndex].every(c => c.textContent);
-      activeBoard = boardWinners[cellIndex] || nextBoardFilled ? null : cellIndex;
-
-      currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
-
-      updateHighlight();
-
-      if (!localMode && !remote) {
-        socket.send(JSON.stringify({ type: 'move', boardIndex, cellIndex }));
-      }
-    }
-
-    function resetGame() {
-      boards.forEach(board => {
-        board.forEach(cell => {
-          cell.textContent = '';
-          cell.classList.remove('won-X', 'won-O');
-        });
-      });
-      boardWinners = Array(9).fill(null);
-      activeBoard = null;
-      currentPlayer = 'X';
-      updateHighlight();
-    }
-
-    function createBoard() {
-      const microBoard = document.createElement('div');
-      microBoard.className = 'micro-board';
-      microBoard.style.gridTemplateColumns = 'repeat(3,1fr)';
-      let cells = [];
-
-      for (let i = 0; i < 9; i++) {
-        const cell = document.createElement('div');
-        cell.className = 'cell';
-        cell.addEventListener('click', () => {
-          makeMove(parseInt(microBoard.dataset.index), i);
-        });
-        microBoard.appendChild(cell);
-        cells.push(cell);
-      }
-
-      return { element: microBoard, cells };
-    }
-
-    function setupBoard() {
-      macro.innerHTML = '';
-      boards = [];
-
-      for (let i = 0; i < 9; i++) {
-        const { element, cells } = createBoard();
-        element.dataset.index = i;
-        macro.appendChild(element);
-        boards.push(cells);
-      }
-      resetGame();
-    }
-
-    // Local play
-    localBtn.onclick = () => {
-      localMode = true;
-      mySymbol = 'X';
-      gameIdBox.textContent = 'Local Play';
-      statusDisplay.textContent = 'Playing locally vs yourself. X starts.';
-      setupBoard();
-      if (socket) {
-        socket.close();
-        socket = null;
-      }
-    };
-
-    // Host game online
-    hostBtn.onclick = () => {
-      if (!usernameInput.value.trim()) {
-        alert('Enter username first!');
-        return;
-      }
-      localMode = false;
-      socket = new WebSocket('ws://localhost:8080');
-      socket.onopen = () => {
+    function hostGame() {
+      if (!socket || socket.readyState !== WebSocket.OPEN) connectSocket();
+      socket.addEventListener('open', () => {
         socket.send(JSON.stringify({ type: 'host' }));
-        statusDisplay.textContent = 'Hosting game...';
-      };
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'hosted') {
-          gameId = data.gameId;
-          gameIdBox.textContent = `Game ID: ${gameId}`;
-          statusDisplay.textContent = `Waiting for a player to join...`;
-          mySymbol = 'X';
-          setupBoard();
-        } else if (data.type === 'start') {
-          statusDisplay.textContent = `Game started! You are X. Your turn first.`;
-          currentPlayer = 'X';
-          activeBoard = null;
-          updateHighlight();
-        } else if (data.type === 'move') {
-          const { boardIndex, cellIndex, symbol } = data;
-          currentPlayer = symbol;
-          makeMove(boardIndex, cellIndex, true);
-        } else if (data.type === 'error') {
-          alert(data.message);
-          socket.close();
-          socket = null;
-        }
-      };
-      socket.onclose = () => {
-        statusDisplay.textContent = 'Disconnected from server.';
-        gameIdBox.textContent = '';
-      };
-    };
+      }, { once: true });
+    }
 
-    // Join game online
-    joinBtn.onclick = () => {
-      const joinId = joinGameIdInput.value.trim().toUpperCase();
-      if (!usernameInput.value.trim()) {
-        alert('Enter username first!');
-        return;
-      }
-      if (!joinId) {
-        alert('Enter a Game ID to join!');
-        return;
-      }
-      localMode = false;
-      socket = new WebSocket('ws://localhost:8080');
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ type: 'join', gameId: joinId }));
-        statusDisplay.textContent = `Joining game ${joinId}...`;
-      };
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'start') {
-          statusDisplay.textContent = 'Game started! You are O. Wait for X to move.';
-          mySymbol = 'O';
-          setupBoard();
-          currentPlayer = 'X';
-          activeBoard = null;
-          updateHighlight();
-        } else if (data.type === 'move') {
-          const { boardIndex, cellIndex, symbol } = data;
-          currentPlayer = symbol;
-          makeMove(boardIndex, cellIndex, true);
-        } else if (data.type === 'error') {
-          alert(data.message);
-          socket.close();
-          socket = null;
-        }
-      };
-      socket.onclose = () => {
-        statusDisplay.textContent = 'Disconnected from server.';
-        gameIdBox.textContent = '';
-      };
-    };
+    function joinGame() {
+      const gameId = document.getElementById('gameIdInput').value.trim();
+      if (!gameId) return alert("Enter a Game ID");
+      if (!socket || socket.readyState !== WebSocket.OPEN) connectSocket();
+      socket.addEventListener('open', () => {
+        socket.send(JSON.stringify({ type: 'join', gameId }));
+      }, { once: true });
+    }
 
-    // Initialize local play by default
-    localBtn.click();
+    function sendMove(moveData) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'move', move: moveData }));
+      }
+    }
   </script>
 </body>
 </html>
