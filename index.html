@@ -126,7 +126,6 @@
     function makeMove(boardIndex, cellIndex, remote = false) {
       const cell = boards[boardIndex][cellIndex];
 
-      // Validate move
       if (!remote && (
         cell.textContent || 
         (activeBoard !== null && activeBoard !== boardIndex) || 
@@ -134,10 +133,8 @@
         (!localMode && currentPlayer !== mySymbol)
       )) return;
 
-      // Place mark
       cell.textContent = currentPlayer;
 
-      // Check microboard winner
       const values = boards[boardIndex].map(c => c.textContent);
       const winner = checkWinner(values);
       if (winner) {
@@ -145,7 +142,6 @@
         boards[boardIndex].forEach(c => c.classList.add('won-' + winner));
       }
 
-      // Check macroboard winner
       const macroWinner = checkWinner(boardWinners);
       if (macroWinner) {
         alert(`${macroWinner} wins the game!`);
@@ -153,11 +149,9 @@
         return;
       }
 
-      // Update activeBoard for next move
       const nextBoardFilled = boards[cellIndex].every(c => c.textContent);
       activeBoard = boardWinners[cellIndex] || nextBoardFilled ? null : cellIndex;
 
-      // Swap current player
       currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
 
       updateHighlight();
