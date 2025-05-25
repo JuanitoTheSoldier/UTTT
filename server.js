@@ -1,7 +1,11 @@
+const http = require('http');
 const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 8080 });
 
-const games = new Map(); // gameId -> { players: [ws, ws], ... }
+const server = http.createServer();
+
+const wss = new WebSocket.Server({ noServer: true });
+
+const games = new Map();
 
 function makeGameId() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -49,7 +53,6 @@ wss.on('connection', (ws) => {
 
       game.players.push(ws);
 
-      // Notify both players game is starting
       game.players.forEach((player) => {
         if (player.readyState === WebSocket.OPEN) {
           player.send(JSON.stringify({ type: 'start' }));
@@ -66,7 +69,6 @@ wss.on('connection', (ws) => {
       if (!game) return;
 
       const symbol = ws.symbol;
-      // Broadcast move to both players
       game.players.forEach((player) => {
         if (player.readyState === WebSocket.OPEN) {
           player.send(JSON.stringify({
@@ -81,7 +83,6 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    // Clean up game if player disconnects
     if (!ws.gameId) return;
     const game = games.get(ws.gameId);
     if (!game) return;
@@ -94,4 +95,13 @@ wss.on('connection', (ws) => {
   });
 });
 
-console.log('WebSocket server running on ws://localhost:8080');
+server.on('upgrade', (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
+});
+
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
