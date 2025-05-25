@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ultimate Tic Tac Toe</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: #f0f0f0;
+      height: 100vh;
+      margin: 0;
+    }
+    .menu {
+      margin-top: 20px;
+    }
+    .macro-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 600px;
+      height: 600px;
+      background-color: #000;
+      padding: 8px;
+      margin-top: 20px;
+    }
+    .micro-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      background-color: #000;
+    }
+    .cell {
+      background-color: white;
+      aspect-ratio: 1 / 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 2em;
+      cursor: pointer;
+    }
+    .highlight {
+      background-color: #ddd;
+    }
+    .won-X {
+      background-color: rgba(255, 0, 0, 0.3);
+    }
+    .won-O {
+      background-color: rgba(0, 0, 255, 0.3);
+    }
+
+    /* The box on the right to show Game ID */
+    #gameIdBox {
+      position: fixed;
+      right: 10px;
+      top: 10px;
+      background: #eee;
+      padding: 10px;
+      border: 1px solid #ccc;
+      font-weight: bold;
+      min-width: 160px;
+      text-align: center;
+      font-family: monospace;
+      user-select: all;
+      white-space: nowrap;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div class="menu">
+    <input type="text" id="username" placeholder="Enter username" />
+    <button id="localBtn">Play Locally</button>
+    <button id="hostBtn">Host Online Game</button>
+    <input type="text" id="joinGameId" placeholder="Game ID to join" />
+    <button id="joinBtn">Join Online Game</button>
+    <div id="status"></div>
+  </div>
+
+  <!-- Game ID display box on right -->
+  <div id="gameIdBox"></div>
+
+  <div class="macro-board" id="macro"></div>
+
+  <script>
+    const macro = document.getElementById('macro');
+    const statusDisplay = document.getElementById('status');
+    const usernameInput = document.getElementById('username');
+    const joinGameIdInput = document.getElementById('joinGameId');
+    const localBtn = document.getElementById('localBtn');
+    const hostBtn = document.getElementById('hostBtn');
+    const joinBtn = document.getElementById('joinBtn');
+    const gameIdBox = document.getElementById('gameIdBox');
+
+    let boards = [];
+    let boardWinners = Array(9).fill(null);
+    let currentPlayer = 'X';
+    let activeBoard = null;
+    let localMode = false;
+    let socket;
+    let gameId;
+
+    function checkWinner(cells) {
+      const lines = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
+      ];
+      for (let [a,b,c] of lines) {
+        if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) {
+          return cells[a];
+        }
+      }
+      return null;
+    }
+
+    function updateHighlight() {
+      boards.forEach((board, i) => {
+        const canPlay = (activeBoard === null || activeBoard === i) && !boardWinners[i];
+        board.forEach(cell => cell.classList.toggle('highlight', canPlay && !cell.textContent));
+      });
+    }
+
+    function makeMove(boardIndex, cellIndex) {
+      const cell = boards[boardIndex][cellIndex];
+      if (cell.textContent || (activeBoard !== null && activeBoard !== boardIndex) || boardWinners[boardIndex]) return;
+      if (!localMode && currentPlayer !== window.mySymbol) return;
+
+      cell.textContent = currentPlayer;
+
+      const values = boards[boardIndex].map(c => c.textContent);
+      const winner = checkWinner(values);
+      if (winner) {
+        boardWinners[boardIndex] = winner;
+        boards[boardIndex].forEach(c => c.classList.add('won-' + winner));
+      }
+
+      const macroWinner = checkWinner(boardWinners);
+      if (macroWinner) {
+        alert(macroWinner + ' wins the game!');
+        return;
+      }
+
+      activeBoard = boardWinners[cellIndex] || boards[cellIndex].every(c => c.textContent) ? null : cellIndex;
+      currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+      updateHighlight();
+
+      if (!localMode) {
+        socket.send(JSON.stringify({ type: 'move', boardIndex, cellIndex }));
+      }
+    }
+
+    for (let i = 0; i < 9; i++) {
+      const microBoard = document.createElement('div');
+      microBoard.className = 'micro-board';
+      macro.appendChild(microBoard);
+
+      const boardCells = [];
+      for (let j = 0; j < 9; j++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.onclick = () => makeMove(i, j);
+        microBoard.appendChild(cell);
+        boardCells.push(cell);
+      }
+      boards.push(boardCells);
+    }
+
+    updateHighlight();
+
+    function resetGame() {
+      boards.forEach(board => board.forEach(cell => cell.textContent = ''));
+      boardWinners = Array(9).fill(null);
+      activeBoard = null;
+      currentPlayer = 'X';
+      updateHighlight();
+    }
+
+    localBtn.onclick = () => {
+      resetGame();
+      localMode = true;
+      statusDisplay.textContent = 'Local mode: Player X starts';
+      gameIdBox.textContent = '';  // Clear any ID displayed
+    };
+
+    hostBtn.onclick = () => {
+      const name = usernameInput.value.trim();
+      if (!name) return alert('Enter a username');
+
+      socket = new WebSocket('ws://localhost:3000');
+
+      socket.onopen = () => {
+        console.log('Socket connected, sending host request');
+        socket.send(JSON.stringify({ type: 'host', name }));
+        window.mySymbol = 'X';
+        currentPlayer = 'X';
+        localMode = false;
+        statusDisplay.textContent = 'Hosting game...';
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Message from server:', data);
+
+        if (data.type === 'hosted') {
+          gameId = data.gameId;
+          statusDisplay.textContent = `Game ID: ${gameId}. Waiting for player...`;
+          gameIdBox.textContent = `Game ID: ${gameId}`;
+        } else if (data.type === 'start') {
+          statusDisplay.textContent = 'Game started!';
+          gameIdBox.textContent = ''; // Clear ID when game starts
+        } else if (data.type === 'move') {
+          // When opponent moves, update board
+          if (data.symbol !== window.mySymbol) {
+            currentPlayer = data.symbol;
+            makeMove(data.boardIndex, data.cellIndex);
+          }
+        }
+      };
+
+      socket.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        statusDisplay.textContent = 'WebSocket error. See console.';
+      };
+
+      socket.onclose = () => {
+        console.log('WebSocket connection closed');
+        statusDisplay.textContent = 'Connection closed';
+      };
+    };
+
+    joinBtn.onclick = () => {
+      const name = usernameInput.value.trim();
+      const id = joinGameIdInput.value.trim();
+      if (!name || !id) return alert('Enter username and game ID');
+
+      socket = new WebSocket('wss://your-railway-project-url.up.railway.app');
+
+      socket.onopen = () => {
+        console.log('Socket connected, sending join request');
+        socket.send(JSON.stringify({ type: 'join', name, gameId: id }));
+        window.mySymbol = 'O';
+        currentPlayer = 'X';
+        localMode = false;
+        statusDisplay.textContent = 'Joining game...';
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Message from server:', data);
+
+        if (data.type === 'start') {
+          statusDisplay.textContent = 'Game started!';
+          gameIdBox.textContent = '';
+        } else if (data.type === 'move') {
+          if (data.symbol !== window.mySymbol) {
+            currentPlayer = data.symbol;
+            makeMove(data.boardIndex, data.cellIndex);
+          }
+        } else if (data.type === 'error') {
+          alert('Error: ' + data.message);
+          socket.close();
+        }
+      };
+
+      socket.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        statusDisplay.textContent = 'WebSocket error. See console.';
+      };
+
+      socket.onclose = () => {
+        console.log('WebSocket connection closed');
+        statusDisplay.textContent = 'Connection closed';
+      };
+    };
+  </script>
+</body>
+</html>
